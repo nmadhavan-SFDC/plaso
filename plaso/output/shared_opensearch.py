@@ -234,55 +234,57 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
       self._use_ssl = os.environ.get('OPENSEARCH_SSL', 'False').lower() == 'true'
       self._ca_certs = os.environ.get('OPENSEARCH_VERIFY_CERTS')
       self._url_prefix = os.environ.get('OPENSEARCH_URL_PREFIX')
+      self._region = os.environ.get('AWS_REGION', 'us-west-2')
+      self._use_aws_auth = os.environ.get('OPENSEARCH_AWS_AUTH', 'False').lower() == 'true'
+      self._verify_certs = True  # Always verify certs when using AWS auth
 
   def _Connect(self):
       """Connects to an OpenSearch server."""
       opensearch_host = {'host': self._host, 'port': self._port}
-
+  
       if self._url_prefix:
           opensearch_host['url_prefix'] = self._url_prefix
-
-      opensearch_http_auth = None
-      use_aws_auth = os.environ.get('OPENSEARCH_AWS_AUTH', 'False').lower() == 'true'
-      
-      if use_aws_auth:
+  
+      if self._use_aws_auth:
           session = boto3.Session()
           credentials = session.get_credentials()
-          region = session.region_name or os.environ.get('AWS_REGION', 'us-west-2')
           
           if credentials is None:
               raise RuntimeError("Unable to locate AWS credentials")
           
-          opensearch_http_auth = AWS4Auth(
+          logger.debug(f"Using AWS authentication. Region: {self._region}")
+          
+          awsauth = AWS4Auth(
               credentials.access_key,
               credentials.secret_key,
-              region,
+              self._region,
               'es',
               session_token=credentials.token
           )
           
           self._client = opensearchpy.OpenSearch(
-              [opensearch_host],
-              http_auth=opensearch_http_auth,
+              hosts=[opensearch_host],
+              http_auth=awsauth,
               use_ssl=True,
-              verify_certs=self._ca_certs is not None,
-              ca_certs=self._ca_certs,
+              verify_certs=self._verify_certs,
               connection_class=RequestsHttpConnection
           )
       else:
+          opensearch_http_auth = None
           if self._username is not None:
               opensearch_http_auth = (self._username, self._password)
-
+  
           self._client = opensearchpy.OpenSearch(
-              [opensearch_host],
+              hosts=[opensearch_host],
               http_auth=opensearch_http_auth,
               use_ssl=self._use_ssl,
+              verify_certs=self._verify_certs,
               ca_certs=self._ca_certs
           )
-
+  
       logger.debug((
           f'Connected to OpenSearch server: {self._host:s} port: {self._port:d} '
-          f'URL prefix: {self._url_prefix!s} AWS auth: {use_aws_auth!s}.'))
+          f'URL prefix: {self._url_prefix!s} AWS auth: {self._use_aws_auth!s}.'))
 
   def _CreateIndexIfNotExists(self, index_name, mappings):
     """Creates an OpenSearch index if it does not exist.
