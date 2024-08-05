@@ -11,7 +11,6 @@ from dfdatetime import posix_time as dfdatetime_posix_time
 
 from dfvfs.serializer.json_serializer import JsonPathSpecSerializer
 
-from flask import current_app
 import boto3
 from requests_aws4auth import AWS4Auth
 from opensearchpy import RequestsHttpConnection
@@ -225,16 +224,16 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
       self._field_names = self._DEFAULT_FIELD_NAMES
       self._field_formatting_helper = SharedOpenSearchFieldFormattingHelper()
       self._flush_interval = self._DEFAULT_FLUSH_INTERVAL
-      self._host = current_app.config.get('OPENSEARCH_HOST', '127.0.0.1')
-      self._port = current_app.config.get('OPENSEARCH_PORT', 9200)
+      self._host = os.environ.get('OPENSEARCH_HOST', '127.0.0.1')
+      self._port = int(os.environ.get('OPENSEARCH_PORT', 9200))
       self._index_name = None
       self._mappings = None
       self._number_of_buffered_events = 0
-      self._username = current_app.config.get('OPENSEARCH_USER')
-      self._password = current_app.config.get('OPENSEARCH_PASSWORD')
-      self._use_ssl = current_app.config.get('OPENSEARCH_SSL', False)
-      self._ca_certs = current_app.config.get('OPENSEARCH_VERIFY_CERTS')
-      self._url_prefix = current_app.config.get('OPENSEARCH_URL_PREFIX')
+      self._username = os.environ.get('OPENSEARCH_USER')
+      self._password = os.environ.get('OPENSEARCH_PASSWORD')
+      self._use_ssl = os.environ.get('OPENSEARCH_SSL', 'False').lower() == 'true'
+      self._ca_certs = os.environ.get('OPENSEARCH_VERIFY_CERTS')
+      self._url_prefix = os.environ.get('OPENSEARCH_URL_PREFIX')
 
   def _Connect(self):
       """Connects to an OpenSearch server."""
@@ -244,7 +243,7 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
           opensearch_host['url_prefix'] = self._url_prefix
 
       opensearch_http_auth = None
-      use_aws_auth = current_app.config.get('OPENSEARCH_AWS_AUTH', False)
+      use_aws_auth = os.environ.get('OPENSEARCH_AWS_AUTH', 'False').lower() == 'true'
       
       if use_aws_auth:
           session = boto3.Session()
