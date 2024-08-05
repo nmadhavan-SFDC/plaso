@@ -216,74 +216,74 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
       'timestamp',
       'timestamp_desc']
 
-def __init__(self):
-    """Initializes an output module."""
-    super(SharedOpenSearchOutputModule, self).__init__()
-    self._client = None
-    self._custom_fields = {}
-    self._event_documents = []
-    self._field_names = self._DEFAULT_FIELD_NAMES
-    self._field_formatting_helper = SharedOpenSearchFieldFormattingHelper()
-    self._flush_interval = self._DEFAULT_FLUSH_INTERVAL
-    self._host = current_app.config.get('OPENSEARCH_HOST', '127.0.0.1')
-    self._port = current_app.config.get('OPENSEARCH_PORT', 9200)
-    self._index_name = None
-    self._mappings = None
-    self._number_of_buffered_events = 0
-    self._username = current_app.config.get('OPENSEARCH_USER')
-    self._password = current_app.config.get('OPENSEARCH_PASSWORD')
-    self._use_ssl = current_app.config.get('OPENSEARCH_SSL', False)
-    self._ca_certs = current_app.config.get('OPENSEARCH_VERIFY_CERTS')
-    self._url_prefix = current_app.config.get('OPENSEARCH_URL_PREFIX')
+  def __init__(self):
+      """Initializes an output module."""
+      super(SharedOpenSearchOutputModule, self).__init__()
+      self._client = None
+      self._custom_fields = {}
+      self._event_documents = []
+      self._field_names = self._DEFAULT_FIELD_NAMES
+      self._field_formatting_helper = SharedOpenSearchFieldFormattingHelper()
+      self._flush_interval = self._DEFAULT_FLUSH_INTERVAL
+      self._host = current_app.config.get('OPENSEARCH_HOST', '127.0.0.1')
+      self._port = current_app.config.get('OPENSEARCH_PORT', 9200)
+      self._index_name = None
+      self._mappings = None
+      self._number_of_buffered_events = 0
+      self._username = current_app.config.get('OPENSEARCH_USER')
+      self._password = current_app.config.get('OPENSEARCH_PASSWORD')
+      self._use_ssl = current_app.config.get('OPENSEARCH_SSL', False)
+      self._ca_certs = current_app.config.get('OPENSEARCH_VERIFY_CERTS')
+      self._url_prefix = current_app.config.get('OPENSEARCH_URL_PREFIX')
 
-def _Connect(self):
-    """Connects to an OpenSearch server."""
-    opensearch_host = {'host': self._host, 'port': self._port}
+  def _Connect(self):
+      """Connects to an OpenSearch server."""
+      opensearch_host = {'host': self._host, 'port': self._port}
 
-    if self._url_prefix:
-        opensearch_host['url_prefix'] = self._url_prefix
+      if self._url_prefix:
+          opensearch_host['url_prefix'] = self._url_prefix
 
-    opensearch_http_auth = None
-    use_aws_auth = current_app.config.get('OPENSEARCH_AWS_AUTH', False)
-    
-    if use_aws_auth:
-        session = boto3.Session()
-        credentials = session.get_credentials()
-        region = session.region_name or current_app.config.get('AWS_REGION', 'us-west-2')
-        
-        if credentials is None:
-            raise RuntimeError("Unable to locate AWS credentials")
-        
-        opensearch_http_auth = AWS4Auth(
-            credentials.access_key,
-            credentials.secret_key,
-            region,
-            'es',
-            session_token=credentials.token
-        )
-        
-        self._client = opensearchpy.OpenSearch(
-            [opensearch_host],
-            http_auth=opensearch_http_auth,
-            use_ssl=True,
-            verify_certs=self._ca_certs is not None,
-            ca_certs=self._ca_certs,
-            connection_class=RequestsHttpConnection
-        )
-    else:
-        if self._username is not None:
-            opensearch_http_auth = (self._username, self._password)
+      opensearch_http_auth = None
+      use_aws_auth = current_app.config.get('OPENSEARCH_AWS_AUTH', False)
+      
+      if use_aws_auth:
+          session = boto3.Session()
+          credentials = session.get_credentials()
+          region = session.region_name or current_app.config.get('AWS_REGION', 'us-west-2')
+          
+          if credentials is None:
+              raise RuntimeError("Unable to locate AWS credentials")
+          
+          opensearch_http_auth = AWS4Auth(
+              credentials.access_key,
+              credentials.secret_key,
+              region,
+              'es',
+              session_token=credentials.token
+          )
+          
+          self._client = opensearchpy.OpenSearch(
+              [opensearch_host],
+              http_auth=opensearch_http_auth,
+              use_ssl=True,
+              verify_certs=self._ca_certs is not None,
+              ca_certs=self._ca_certs,
+              connection_class=RequestsHttpConnection
+          )
+      else:
+          if self._username is not None:
+              opensearch_http_auth = (self._username, self._password)
 
-        self._client = opensearchpy.OpenSearch(
-            [opensearch_host],
-            http_auth=opensearch_http_auth,
-            use_ssl=self._use_ssl,
-            ca_certs=self._ca_certs
-        )
+          self._client = opensearchpy.OpenSearch(
+              [opensearch_host],
+              http_auth=opensearch_http_auth,
+              use_ssl=self._use_ssl,
+              ca_certs=self._ca_certs
+          )
 
-    logger.debug((
-        f'Connected to OpenSearch server: {self._host:s} port: {self._port:d} '
-        f'URL prefix: {self._url_prefix!s} AWS auth: {use_aws_auth!s}.'))
+      logger.debug((
+          f'Connected to OpenSearch server: {self._host:s} port: {self._port:d} '
+          f'URL prefix: {self._url_prefix!s} AWS auth: {use_aws_auth!s}.'))
 
   def _CreateIndexIfNotExists(self, index_name, mappings):
     """Creates an OpenSearch index if it does not exist.
