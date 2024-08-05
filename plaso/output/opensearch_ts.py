@@ -24,28 +24,29 @@ class OpenSearchTimesketchOutputModule(
     self._timeline_identifier = None
 
   def WriteFieldValues(self, output_mediator, field_values):
-    """Writes field values to the output.
+      """Writes field values to the output.
+      Events are buffered in the form of documents and inserted to OpenSearch
+      when the flush interval (threshold) has been reached.
+      Args:
+        output_mediator (OutputMediator): mediates interactions between output
+            modules and other components, such as storage and dfVFS.
+        field_values (dict[str, str]): output field values per name.
 
-    Events are buffered in the form of documents and inserted to OpenSearch
-    when the flush interval (threshold) has been reached.
+      Raises:
+        RuntimeError: when the timeline identifier is not set.
+      """
+      if self._timeline_identifier is None:
+          raise RuntimeError("Timeline identifier is not set. Use SetTimelineIdentifier() before writing events.")
 
-    Args:
-      output_mediator (OutputMediator): mediates interactions between output
-          modules and other components, such as storage and dfVFS.
-      field_values (dict[str, str]): output field values per name.
-    """
-    event_document = {'index': {'_index': self._index_name}}
-
-    # Add timeline_id on the event level. It is used in Timesketch to
-    # support shared indices.
-    field_values['__ts_timeline_id'] = self._timeline_identifier
-
-    self._event_documents.append(event_document)
-    self._event_documents.append(field_values)
-    self._number_of_buffered_events += 1
-
-    if self._number_of_buffered_events > self._flush_interval:
-      self._FlushEvents()
+      event_document = {'index': {'_index': self._index_name}}
+      # Add timeline_id on the event level. It is used in Timesketch to
+      # support shared indices.
+      field_values['__ts_timeline_id'] = self._timeline_identifier
+      self._event_documents.append(event_document)
+      self._event_documents.append(field_values)
+      self._number_of_buffered_events += 1
+      if self._number_of_buffered_events > self._flush_interval:
+        self._FlushEvents()
 
   def GetMissingArguments(self):
     """Retrieves a list of arguments that are missing from the input.
