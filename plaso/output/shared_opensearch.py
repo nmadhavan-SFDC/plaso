@@ -248,7 +248,7 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
       if use_aws_auth:
           session = boto3.Session()
           credentials = session.get_credentials()
-          region = session.region_name or current_app.config.get('AWS_REGION', 'us-west-2')
+          region = session.region_name or os.environ.get('AWS_REGION', 'us-west-2')
           
           if credentials is None:
               raise RuntimeError("Unable to locate AWS credentials")
