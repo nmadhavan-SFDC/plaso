@@ -23,31 +23,74 @@ class OpenSearchTimesketchOutputModule(
     super(OpenSearchTimesketchOutputModule, self).__init__()
     self._timeline_identifier = None
 
-  def WriteFieldValues(self, output_mediator, field_values):
-      """Writes field values to the output.
-      Events are buffered in the form of documents and inserted to OpenSearch
-      when the flush interval (threshold) has been reached.
-      Args:
-        output_mediator (OutputMediator): mediates interactions between output
-            modules and other components, such as storage and dfVFS.
-        field_values (dict[str, str]): output field values per name.
+  def WriteFieldValues(self, output_mediator, field_values, event=None, event_data=None, event_data_stream=None, event_tag=None):
+    """Writes field values to the output.
 
-      Raises:
-        RuntimeError: when the timeline identifier is not set.
-      """
-      if self._timeline_identifier is None:
-          raise RuntimeError("Timeline identifier is not set. Use SetTimelineIdentifier() before writing events.")
+    Args:
+      output_mediator (OutputMediator): mediates interactions between output
+          modules and other components, such as storage and dfVFS.
+      field_values (dict[str, str]): output field values per name.
+      event (Optional[EventObject]): event.
+      event_data (Optional[EventData]): event data.
+      event_data_stream (Optional[EventDataStream]): event data stream.
+      event_tag (Optional[EventTag]): event tag.
 
-      event_document = {'index': {'_index': self._index_name}}
-      # Add timeline_id on the event level. It is used in Timesketch to
-      # support shared indices.
-      field_values['__ts_timeline_id'] = self._timeline_identifier
-      self._event_documents.append(event_document)
-      self._event_documents.append(field_values)
-      self._number_of_buffered_events += 1
-      if self._number_of_buffered_events > self._flush_interval:
-        self._FlushEvents()
+    Raises:
+      RuntimeError: when the timeline identifier is not set.
+    """
+    if self._timeline_identifier is None:
+      raise RuntimeError("Timeline identifier is not set.")
 
+    event_document = {'index': {'_index': self._index_name}}
+    # Add timeline_id on the event level. It is used in Timesketch to
+    # support shared indices.
+    field_values['__ts_timeline_id'] = self._timeline_identifier
+    self._event_documents.append(event_document)
+    self._event_documents.append(field_values)
+    self._number_of_buffered_events += 1
+    if self._number_of_buffered_events > self._flush_interval:
+      self._FlushEvents()
+
+  def WriteFieldValuesOfMACBGroup(self, output_mediator, macb_group):
+    """Writes field values of a MACB group to the output.
+
+    Args:
+      output_mediator (OutputMediator): mediates interactions between output
+          modules and other components, such as storage and dfVFS.
+      macb_group (list[tuple[EventObject, EventData, EventDataStream, EventTag]]):
+          group of MACB events to write.
+    """
+    for event, event_data, event_data_stream, event_tag in macb_group:
+      field_values = self.GetFieldValues(
+          output_mediator, event, event_data, event_data_stream, event_tag)
+      self.WriteFieldValues(output_mediator, field_values)
+
+  def GetFieldValues(self, output_mediator, event, event_data, event_data_stream, event_tag):
+    """Retrieves the field values for an event.
+
+    Args:
+      output_mediator (OutputMediator): mediates interactions between output
+          modules and other components, such as storage and dfVFS.
+      event (EventObject): event.
+      event_data (EventData): event data.
+      event_data_stream (EventDataStream): event data stream.
+      event_tag (EventTag): event tag.
+
+    Returns:
+      dict[str, str]: field values.
+    """
+    # Implement the logic to extract field values from the event
+    # This is just a placeholder, you'll need to implement the actual logic
+    field_values = {}
+    for attribute_name, attribute_value in event_data.GetAttributes():
+      field_values[attribute_name] = attribute_value
+    
+    # Add any necessary transformations or additional fields
+    field_values['timestamp'] = event.timestamp
+    field_values['timestamp_desc'] = event.timestamp_desc
+
+    return field_values
+    
   def GetMissingArguments(self):
     """Retrieves a list of arguments that are missing from the input.
 
