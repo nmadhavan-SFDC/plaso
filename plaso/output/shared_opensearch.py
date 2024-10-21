@@ -2,7 +2,11 @@
 """Shared functionality for OpenSearch output modules."""
 
 import logging
+import syslog
 import os
+import boto3
+from requests_aws4auth import AWS4Auth
+from opensearchpy import RequestsHttpConnection
 
 from acstore.containers import interface as containers_interface
 
@@ -21,11 +25,29 @@ from plaso.output import formatting_helper
 from plaso.output import interface
 from plaso.output import logger
 
+from logging.handlers import SysLogHandler
+
+# Configure the logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG to capture all logs
+
+# Add syslog handler
+syslog_handler = SysLogHandler(address='/dev/log')
+formatter = logging.Formatter('%(name)s: %(message)s')
+syslog_handler.setFormatter(formatter)
+logger.addHandler(syslog_handler)
+
+# Configure logging
+logging.basicConfig()
+logging.getLogger('opensearchpy').setLevel(logging.DEBUG)
+logging.getLogger('requests_aws4auth').setLevel(logging.DEBUG)
+logging.getLogger('botocore').setLevel(logging.DEBUG)
+
 
 # Configure the OpenSearch logger.
 if opensearchpy:
   opensearch_logger = logging.getLogger('opensearchpy.trace')
-  opensearch_logger.setLevel(logging.WARNING)
+  opensearch_logger.setLevel(logging.DEBUG)
 
 
 class SharedOpenSearchFieldFormattingHelper(
@@ -212,55 +234,129 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
       'timestamp_desc']
 
   def __init__(self):
-      """Initializes an output module."""
-      super(SharedOpenSearchOutputModule, self).__init__()
-      self._client = None
-      self._custom_fields = {}
-      self._event_documents = []
-      self._field_names = self._DEFAULT_FIELD_NAMES
-      self._field_formatting_helper = SharedOpenSearchFieldFormattingHelper()
-      self._flush_interval = self._DEFAULT_FLUSH_INTERVAL
-      self._host = None
-      self._index_name = None
-      self._mappings = None
-      self._number_of_buffered_events = 0
-      self._port = None
-      self._use_ssl = None
-      self._url_prefix = None
-      self._aws_auth = False
-      self._aws_region = None
-      self._verify_certs = True
-      self._ca_certs = None
+    """Initializes an output module."""
+    super(SharedOpenSearchOutputModule, self).__init__()
+    self._client = None
+    self._custom_fields = {}
+    self._event_documents = []
+    self._field_names = self._DEFAULT_FIELD_NAMES
+    self._field_formatting_helper = SharedOpenSearchFieldFormattingHelper()
+    self._flush_interval = self._DEFAULT_FLUSH_INTERVAL
+    self._host = None
+    self._index_name = None
+    self._mappings = None
+    self._number_of_buffered_events = 0
+    self._password = None
+    self._port = None
+    self._username = None
+    self._use_ssl = None
+    self._url_prefix = None
+    self._aws_region = 'us-west-2'
+    self._aws_auth = True
+    self._verify_certs = True  # Default to verifying SSL certificates
+    self._ca_certs = None      # Path to CA certificate bundle, if any
+
+  def SetUp(self, config):
+    """Sets up the output module.
+    Args:
+    config (dict): Configuration dictionary.
+    """
+    self._host = config.get('OPENSEARCH_HOST')
+    self._port = config.get('OPENSEARCH_PORT')
+    self._use_ssl = config.get('OPENSEARCH_SSL', True)
+    self._verify_certs = config.get('OPENSEARCH_VERIFY_CERTS', True)
+    self._aws_auth = config.get('OPENSEARCH_AWS_AUTH', True)
+    self._aws_region = config.get('OPENSEARCH_AWS_REGION', 'us-west-2')
+    self._index_name = config.get('OPENSEARCH_INDEX_NAME')
+    self._flush_interval = config.get('OPENSEARCH_FLUSH_INTERVAL', self._DEFAULT_FLUSH_INTERVAL)
+
+  def SetAWSRegion(self, aws_region):
+    """Sets the AWS region.
+
+    Args:
+      aws_region (str): AWS region where the OpenSearch cluster is located.
+    """
+    self._aws_region = aws_region
+    logger.debug(f'AWS region: {aws_region}')
+
+  def SetUseAWSAuth(self, aws_auth):
+      """Sets whether to use AWS authentication.
+
+      Args:
+        _aws_auth (bool): True if AWS authentication should be used.
+      """
+      self._aws_auth = aws_auth
+      logger.debug(f'Use AWS Auth: {aws_auth}')
+
+  @classmethod
+  def AddArguments(cls, argument_group):
+      """Adds command-line arguments to the argument group.
+
+      Args:
+        argument_group (argparse._ArgumentGroup|argparse.ArgumentParser):
+            argparse group.
+      """
+      argument_group.add_argument(
+        '--use-aws-auth', dest='aws_auth', action='store_true', default=True,
+        help='Use AWS authentication for OpenSearch.')
+      argument_group.add_argument(
+          '--opensearch-server', dest='opensearch_server', type=str,
+          help='Hostname or IP address of the OpenSearch server.')
+      argument_group.add_argument(
+          '--opensearch-port', dest='opensearch_port', type=int, default=9200,
+          help='Port number of the OpenSearch server.')
+      argument_group.add_argument(
+          '--use-ssl', dest='use_ssl', action='store_true', default=True,
+          help='Enforce use of SSL/TLS.')
+      argument_group.add_argument(
+          '--use-aws-auth', dest='aws_auth', action='store_true', default=False,
+          help='Use AWS authentication for OpenSearch.')
+      argument_group.add_argument(
+          '--aws-region', dest='aws_region', type=str, default='us-east-1',
+          help='AWS region where the OpenSearch cluster is located.')
+      argument_group.add_argument(
+          '--index-name', dest='index_name', type=str, required=True,
+          help='Name of the OpenSearch index to write to.')
+      argument_group.add_argument(
+          '--timeline_id', dest='timeline_id', type=int, required=True,
+          help='Timeline identifier.')
 
   def _Connect(self):
       """Connects to an OpenSearch server."""
-      if not self._client:
-          opensearch_host = {'host': self._host, 'port': self._port}
+      logger.debug(f"Connecting to OpenSearch: Host={self._host}, Port={self._port}, AWS Auth={self._aws_auth}")
+      opensearch_host = {'host': self._host, 'port': self._port}
 
-          client_params = {
-              'hosts': [opensearch_host],
-              'use_ssl': self._use_ssl,
-              'verify_certs': self._verify_certs
-          }
+      client_params = {
+          'hosts': [opensearch_host],
+          'use_ssl': self._use_ssl,
+          'verify_certs': self._verify_certs
+      }
 
-          if self._aws_auth:
-              session = boto3.Session(region_name=self._aws_region)
-              credentials = session.get_credentials()
-              awsauth = AWS4Auth(
-                  credentials.access_key,
-                  credentials.secret_key,
-                  self._aws_region,
-                  'es',
-                  session_token=credentials.token,
-              )
-              client_params['http_auth'] = awsauth
-              client_params['connection_class'] = RequestsHttpConnection
+      if self._aws_auth:
+          syslog.syslog(f"Using AWS Auth with region: {self._aws_region}")
+          syslog.syslog(f"Using AWS Auth with region: {self._aws_region}")
+          session = boto3.Session(region_name=self._aws_region)
+          credentials = session.get_credentials()
+          syslog.syslog(f"Session credentials: {credentials.access_key}, {credentials.secret_key}, {credentials.token}")
+          awsauth = AWS4Auth(
+              credentials.access_key,
+              credentials.secret_key,
+              self._aws_region,
+              'es',
+              session_token=credentials.token,
+          )
+          client_params['http_auth'] = awsauth
+          client_params['connection_class'] = RequestsHttpConnection
 
+      try:
           self._client = opensearchpy.OpenSearch(**client_params)
+          info = self._client.info()
+          logger.debug(f"Successfully connected to OpenSearch. Cluster info: {info}")
+      except Exception as e:
+          logger.info(f"Failed to connect to OpenSearch: {str(e)}")
+          raise
 
-    logger.debug((
-        f'Connected to OpenSearch server: {self._host:s} port: {self._port:d} '
-        f'URL prefix: {self._url_prefix!s}.'))
+      logger.info(f'Connected to OpenSearch server: {self._host} port: {self._port}')
 
   def _CreateIndexIfNotExists(self, index_name, mappings):
     """Creates an OpenSearch index if it does not exist.
@@ -412,21 +508,6 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
     """
     self._field_names.extend(field_names)
 
-  def SetUp(self, config):
-    """Sets up the output module.
-
-    Args:
-      config (dict): Configuration dictionary.
-    """
-    self._host = config.get('OPENSEARCH_HOST')
-    self._port = config.get('OPENSEARCH_PORT')
-    self._use_ssl = config.get('OPENSEARCH_SSL', True)
-    self._verify_certs = config.get('OPENSEARCH_VERIFY_CERTS', True)
-    self._aws_auth = config.get('OPENSEARCH_AWS_AUTH', False)
-    self._aws_region = config.get('OPENSEARCH_AWS_REGION')
-    self._index_name = config.get('OPENSEARCH_INDEX_NAME')
-    self._flush_interval = config.get('OPENSEARCH_FLUSH_INTERVAL', self._DEFAULT_FLUSH_INTERVAL)
-
   def SetCustomFields(self, field_names_and_values):
     """Sets the names and values of custom fields to output.
 
@@ -503,24 +584,25 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
     logger.debug(f'OpenSearch use SSL/TLS: {use_ssl!s}')
 
   def SetCACertificatesPath(self, ca_certificates_path):
-    """Sets the path to the CA certificates.
+      """Sets the path to the CA certificates.
 
-    Args:
-      ca_certificates_path (str): path to file containing a list of root
-        certificates to trust.
+      Args:
+        ca_certificates_path (str): path to file containing a list of root
+          certificates to trust.
 
-    Raises:
-      BadConfigOption: if the CA certificates file does not exist.
-    """
-    if not ca_certificates_path:
-      return
+      Raises:
+        BadConfigOption: if the CA certificates file does not exist.
+      """
+      if not ca_certificates_path:
+          return
 
-    if not os.path.exists(ca_certificates_path):
-      raise errors.BadConfigOption(
-          f'No such certificate file: {ca_certificates_path:s}')
+      if not os.path.exists(ca_certificates_path):
+          raise errors.BadConfigOption(
+              f'No such certificate file: {ca_certificates_path:s}')
 
-    self._ca_certs = ca_certificates_path
-    logger.debug(f'OpenSearch certificate file: {ca_certificates_path:s}')
+      self._ca_certs = ca_certificates_path  # Correct assignment
+      logger.debug(f'OpenSearch certificate file: {ca_certificates_path:s}')
+
 
   def SetURLPrefix(self, url_prefix):
     """Sets the URL prefix.
