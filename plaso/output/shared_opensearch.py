@@ -212,46 +212,51 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
       'timestamp_desc']
 
   def __init__(self):
-    """Initializes an output module."""
-    super(SharedOpenSearchOutputModule, self).__init__()
-    self._client = None
-    self._custom_fields = {}
-    self._event_documents = []
-    self._field_names = self._DEFAULT_FIELD_NAMES
-    self._field_formatting_helper = SharedOpenSearchFieldFormattingHelper()
-    self._flush_interval = self._DEFAULT_FLUSH_INTERVAL
-    self._host = None
-    self._index_name = None
-    self._mappings = None
-    self._number_of_buffered_events = 0
-    self._password = None
-    self._port = None
-    self._username = None
-    self._use_ssl = None
-    self._ca_certs = None
-    self._url_prefix = None
+      """Initializes an output module."""
+      super(SharedOpenSearchOutputModule, self).__init__()
+      self._client = None
+      self._custom_fields = {}
+      self._event_documents = []
+      self._field_names = self._DEFAULT_FIELD_NAMES
+      self._field_formatting_helper = SharedOpenSearchFieldFormattingHelper()
+      self._flush_interval = self._DEFAULT_FLUSH_INTERVAL
+      self._host = None
+      self._index_name = None
+      self._mappings = None
+      self._number_of_buffered_events = 0
+      self._port = None
+      self._use_ssl = None
+      self._url_prefix = None
+      self._aws_auth = False
+      self._aws_region = None
+      self._verify_certs = True
+      self._ca_certs = None
 
   def _Connect(self):
-    """Connects to an OpenSearch server.
+      """Connects to an OpenSearch server."""
+      if not self._client:
+          opensearch_host = {'host': self._host, 'port': self._port}
 
-    Raises:
-      RuntimeError: if the OpenSearch version is not supported or the server
-          cannot be reached.
-    """
-    opensearch_host = {'host': self._host, 'port': self._port}
+          client_params = {
+              'hosts': [opensearch_host],
+              'use_ssl': self._use_ssl,
+              'verify_certs': self._verify_certs
+          }
 
-    if self._url_prefix:
-      opensearch_host['url_prefix'] = self._url_prefix
+          if self._aws_auth:
+              session = boto3.Session(region_name=self._aws_region)
+              credentials = session.get_credentials()
+              awsauth = AWS4Auth(
+                  credentials.access_key,
+                  credentials.secret_key,
+                  self._aws_region,
+                  'es',
+                  session_token=credentials.token,
+              )
+              client_params['http_auth'] = awsauth
+              client_params['connection_class'] = RequestsHttpConnection
 
-    opensearch_http_auth = None
-    if self._username is not None:
-      opensearch_http_auth = (self._username, self._password)
-
-    self._client = opensearchpy.OpenSearch(
-        [opensearch_host],
-        http_auth=opensearch_http_auth,
-        use_ssl=self._use_ssl,
-        ca_certs=self._ca_certs)
+          self._client = opensearchpy.OpenSearch(**client_params)
 
     logger.debug((
         f'Connected to OpenSearch server: {self._host:s} port: {self._port:d} '
@@ -406,6 +411,21 @@ class SharedOpenSearchOutputModule(interface.OutputModule):
       field_names (list[str]): names of additional fields to output.
     """
     self._field_names.extend(field_names)
+
+  def SetUp(self, config):
+    """Sets up the output module.
+
+    Args:
+      config (dict): Configuration dictionary.
+    """
+    self._host = config.get('OPENSEARCH_HOST')
+    self._port = config.get('OPENSEARCH_PORT')
+    self._use_ssl = config.get('OPENSEARCH_SSL', True)
+    self._verify_certs = config.get('OPENSEARCH_VERIFY_CERTS', True)
+    self._aws_auth = config.get('OPENSEARCH_AWS_AUTH', False)
+    self._aws_region = config.get('OPENSEARCH_AWS_REGION')
+    self._index_name = config.get('OPENSEARCH_INDEX_NAME')
+    self._flush_interval = config.get('OPENSEARCH_FLUSH_INTERVAL', self._DEFAULT_FLUSH_INTERVAL)
 
   def SetCustomFields(self, field_names_and_values):
     """Sets the names and values of custom fields to output.
