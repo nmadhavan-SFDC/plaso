@@ -95,7 +95,7 @@ class OpenSearchTimesketchOutputModule(
           modules and other components, such as storage and dfVFS.
     """
     # Set mappings before connecting
-    self._mappings = self._LoadMappings()
+    #self._mappings = self._LoadMappings()
     self._Connect()
     self._CreateIndexIfNotExists(self._index_name, self._mappings)
   
