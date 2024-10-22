@@ -37,6 +37,10 @@ class OpenSearchTimesketchOutputModule(
     """
     event_document = {'index': {'_index': self._index_name}}
 
+    # Add timeline_id on the event level. It is used in Timesketch to
+    # support shared indices.
+    field_values['__ts_timeline_id'] = self._timeline_identifier
+
     self._event_documents.append(event_document)
     self._event_documents.append(field_values)
     self._number_of_buffered_events += 1
