@@ -499,40 +499,40 @@ class PsortTool(
     # TODO: abort if session.aborted is True
 
     if self._output_format != 'null':
-        storage_reader = (
-            storage_factory.StorageFactory.CreateStorageReaderForFile(
-                self._storage_file_path))
-    
-        # Create the knowledge base and read preprocessing information.
-        knowledge_base_object = knowledge_base.KnowledgeBase()
-        storage_reader.ReadPreprocessingInformation(knowledge_base_object)
-    
-        # Create the output mediator with the storage_reader.
-        output_mediator = output_mediator_module.OutputMediator(
-            knowledge_base_object,
-            data_location=self._data_location,
-            preferred_encoding='utf-8',
-            storage_reader=storage_reader)
-    
-        # Set up the output module with the output mediator.
-        self._output_module.SetOutputMediator(output_mediator)
-    
-        # TODO: add single process output and formatting engine support.
-        output_engine = (
-            multi_output_engine.OutputAndFormattingMultiProcessEngine())
-    
-        output_engine.SetStatusUpdateInterval(self._status_view_interval)
-    
-        output_engine.ExportEvents(
-            storage_reader, self._output_module, configuration,
-            deduplicate_events=self._deduplicate_events,
-            event_filter=self._event_filter,
-            status_update_callback=status_update_callback,
-            time_slice=self._time_slice, use_time_slicer=self._use_time_slicer)
+      storage_reader = (
+          storage_factory.StorageFactory.CreateStorageReaderForFile(
+              self._storage_file_path))
+  
+      # Create the knowledge base and read preprocessing information.
+      knowledge_base_object = knowledge_base.KnowledgeBase()
+      storage_reader.ReadPreprocessingInformation(knowledge_base_object)
+  
+      # Create the output mediator with the storage_reader.
+      output_mediator = output_mediator_module.OutputMediator(
+          knowledge_base_object,
+          data_location=self._data_location,
+          preferred_encoding='utf-8',
+          storage_reader=storage_reader)
+  
+      # Set up the output module with the output mediator.
+      self._output_module.SetOutputMediator(output_mediator)
+  
+      # TODO: add single process output and formatting engine support.
+      output_engine = (
+          multi_output_engine.OutputAndFormattingMultiProcessEngine())
+  
+      output_engine.SetStatusUpdateInterval(self._status_view_interval)
+  
+      output_engine.ExportEvents(
+          storage_reader, self._output_module, configuration,
+          deduplicate_events=self._deduplicate_events,
+          event_filter=self._event_filter,
+          status_update_callback=status_update_callback,
+          time_slice=self._time_slice, use_time_slicer=self._use_time_slicer)
 
 
-      self._output_module.Close()
-      self._output_module = None
+    self._output_module.Close()
+    self._output_module = None
 
     if self._quiet_mode:
       return
