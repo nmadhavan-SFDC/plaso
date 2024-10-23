@@ -90,13 +90,10 @@ class OpenSearchTimesketchOutputModule(
     when the flush interval (threshold) has been reached.
 
     Args:
-        field_values (dict[str, str]): output field values per name.
+      output_mediator (OutputMediator): mediates interactions between output
+          modules and other components, such as storage and dfVFS.
+      field_values (dict[str, str]): output field values per name.
     """
-    # Ensure that the output_mediator is set
-    if not self._output_mediator:
-        logger.error('Output mediator is not set.')
-        return
-
     event_document = {'index': {'_index': self._index_name}}
 
     # Add timeline_id on the event level. It is used in Timesketch to
@@ -107,8 +104,8 @@ class OpenSearchTimesketchOutputModule(
     self._event_documents.append(field_values)
     self._number_of_buffered_events += 1
 
-    if self._number_of_buffered_events >= self._flush_interval:
-        self._FlushEvents()
+    if self._number_of_buffered_events > self._flush_interval:
+      self._FlushEvents()
 
         
   def SetUp(self, options):
