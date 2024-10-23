@@ -79,11 +79,11 @@ class OpenSearchTimesketchOutputModule(
           modules and other components, such as storage and dfVFS.
     """
     # Set mappings before connecting
-    self._mappings = self._LoadMappings()
+    #self._mappings = self._LoadMappings()
     self._Connect()
     self._CreateIndexIfNotExists(self._index_name, self._mappings)
 
-  def WriteFieldValues(self, field_values):
+  def WriteFieldValues(self, output_mediator, field_values):
     """Writes field values to the output.
 
     Events are buffered in the form of documents and inserted to OpenSearch
@@ -97,10 +97,11 @@ class OpenSearchTimesketchOutputModule(
         logger.error('Output mediator is not set.')
         return
 
-    # Add timeline_id to field_values for Timesketch
-    field_values['__ts_timeline_id'] = self._timeline_identifier
-
     event_document = {'index': {'_index': self._index_name}}
+
+    # Add timeline_id on the event level. It is used in Timesketch to
+    # support shared indices.
+    field_values['__ts_timeline_id'] = self._timeline_identifier
 
     self._event_documents.append(event_document)
     self._event_documents.append(field_values)
