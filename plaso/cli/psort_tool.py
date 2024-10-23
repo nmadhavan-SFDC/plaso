@@ -15,19 +15,16 @@ from plaso.cli import logger
 from plaso.cli import status_view
 from plaso.cli import tool_options
 from plaso.cli import views
-from plaso.cli import tools
 from plaso.cli.helpers import manager as helpers_manager
 from plaso.containers import reports
 from plaso.engine import configurations
 from plaso.engine import engine
-from plaso.engine import knowledge_base
 from plaso.helpers import language_tags
 from plaso.lib import definitions
 from plaso.lib import errors
 from plaso.lib import loggers
 from plaso.multi_process import output_engine as multi_output_engine
 from plaso.storage import factory as storage_factory
-from plaso.output import mediator as output_mediator_module
 
 
 class PsortTool(
@@ -463,77 +460,67 @@ class PsortTool(
     """Processes a Plaso storage file.
 
     Raises:
-        BadConfigOption: when a configuration parameter fails validation or the
-            storage file cannot be opened with read access.
-        RuntimeError: if a non-recoverable situation is encountered.
+      BadConfigOption: when a configuration parameter fails validation or the
+          storage file cannot be opened with read access.
+      RuntimeError: if a non-recoverable situation is encountered.
     """
     self._status_view.SetMode(self._status_view_mode)
     self._status_view.SetStatusFile(self._status_view_file)
     self._status_view.SetStorageFileInformation(self._storage_file_path)
 
-    status_update_callback = self._status_view.GetAnalysisStatusUpdateCallback()
+    status_update_callback = (
+        self._status_view.GetAnalysisStatusUpdateCallback())
 
     storage_reader = storage_factory.StorageFactory.CreateStorageReaderForFile(
         self._storage_file_path)
     if not storage_reader:
-        raise RuntimeError('Unable to create storage reader.')
+      raise RuntimeError('Unable to create storage reader.')
 
     try:
-        self._number_of_stored_analysis_reports = (
-            storage_reader.GetNumberOfAttributeContainers(
-                self._CONTAINER_TYPE_ANALYSIS_REPORT))
+      self._number_of_stored_analysis_reports = (
+          storage_reader.GetNumberOfAttributeContainers(
+              self._CONTAINER_TYPE_ANALYSIS_REPORT))
     finally:
-        storage_reader.Close()
+      storage_reader.Close()
 
     session = engine.BaseEngine.CreateSession()
 
     configuration = self._CreateOutputAndFormattingProcessingConfiguration()
 
+    # TODO: implement _CreateAnalysisProcessingConfiguration
+
     if self._analysis_plugins:
-        self._AnalyzeEvents(
-            session, configuration, status_update_callback=status_update_callback)
+      self._AnalyzeEvents(
+          session, configuration, status_update_callback=status_update_callback)
+
+    # TODO: abort if session.aborted is True
 
     if self._output_format != 'null':
-        storage_reader = storage_factory.StorageFactory.CreateStorageReaderForFile(
-            self._storage_file_path)
+      storage_reader = (
+          storage_factory.StorageFactory.CreateStorageReaderForFile(
+              self._storage_file_path))
 
-        # Create the knowledge base and populate it with event sources
-        knowledge_base_object = knowledge_base.KnowledgeBase()
-        source_containers = storage_reader.GetAttributeContainers(
-            definitions.CONTAINER_TYPE_SOURCE)
+      # TODO: add single process output and formatting engine support.
+      output_engine = (
+          multi_output_engine.OutputAndFormattingMultiProcessEngine())
 
-        for container in source_containers:
-            knowledge_base_object.SetEventSource(container)
+      output_engine.SetStatusUpdateInterval(self._status_view_interval)
 
-        # Create the output mediator with the storage_reader
-        output_mediator = output_mediator_module.OutputMediator(
-            knowledge_base_object,
-            data_location=self._data_location,
-            preferred_encoding='utf-8',
-            storage_reader=storage_reader)
+      output_engine.ExportEvents(
+          storage_reader, self._output_module, configuration,
+          deduplicate_events=self._deduplicate_events,
+          event_filter=self._event_filter,
+          status_update_callback=status_update_callback,
+          time_slice=self._time_slice, use_time_slicer=self._use_time_slicer)
 
-        # Set up the output module with the output mediator
-        self._output_module.SetOutputMediator(output_mediator)
-
-        output_engine = multi_output_engine.OutputAndFormattingMultiProcessEngine()
-        output_engine.SetStatusUpdateInterval(self._status_view_interval)
-
-        output_engine.ExportEvents(
-            storage_reader, self._output_module, configuration,
-            deduplicate_events=self._deduplicate_events,
-            event_filter=self._event_filter,
-            status_update_callback=status_update_callback,
-            time_slice=self._time_slice, use_time_slicer=self._use_time_slicer)
-
-        self._output_module.Close()
-        self._output_module = None
+      self._output_module.Close()
+      self._output_module = None
 
     if self._quiet_mode:
-        return
+      return
 
     self._output_writer.Write('Processing completed.\n')
 
     storage_reader = storage_factory.StorageFactory.CreateStorageReaderForFile(
         self._storage_file_path)
     self._PrintAnalysisReportsDetails(storage_reader)
-
