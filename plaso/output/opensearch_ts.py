@@ -23,26 +23,14 @@ class OpenSearchTimesketchOutputModule(
     super(OpenSearchTimesketchOutputModule, self).__init__()
     self._timeline_identifier = None
 
-
-  def WriteFieldValues(self, output_mediator, field_values):
-    """Writes field values to the output.
-
-    Events are buffered in the form of documents and inserted to OpenSearch
-    when the flush interval (threshold) has been reached.
-
+  def SetOutputMediator(self, output_mediator):
+    """Sets the output mediator.
+    
     Args:
-      output_mediator (OutputMediator): mediates interactions between output
-          modules and other components, such as storage and dfVFS.
-      field_values (dict[str, str]): output field values per name.
+        output_mediator (OutputMediator): mediates interactions between output
+            modules and other components, such as storage and dfVFS.
     """
-    event_document = {'index': {'_index': self._index_name}}
-
-    self._event_documents.append(event_document)
-    self._event_documents.append(field_values)
-    self._number_of_buffered_events += 1
-
-    if self._number_of_buffered_events > self._flush_interval:
-      self._FlushEvents()
+    self._output_mediator = output_mediator
 
 
   def GetMissingArguments(self):
@@ -94,7 +82,34 @@ class OpenSearchTimesketchOutputModule(
     self._mappings = self._LoadMappings()
     self._Connect()
     self._CreateIndexIfNotExists(self._index_name, self._mappings)
-  
+
+  def WriteFieldValues(self, field_values):
+    """Writes field values to the output.
+
+    Events are buffered in the form of documents and inserted to OpenSearch
+    when the flush interval (threshold) has been reached.
+
+    Args:
+        field_values (dict[str, str]): output field values per name.
+    """
+    # Ensure that the output_mediator is set
+    if not self._output_mediator:
+        logger.error('Output mediator is not set.')
+        return
+
+    # Add timeline_id to field_values for Timesketch
+    field_values['__ts_timeline_id'] = self._timeline_identifier
+
+    event_document = {'index': {'_index': self._index_name}}
+
+    self._event_documents.append(event_document)
+    self._event_documents.append(field_values)
+    self._number_of_buffered_events += 1
+
+    if self._number_of_buffered_events >= self._flush_interval:
+        self._FlushEvents()
+
+        
   def SetUp(self, options):
     """Sets up the output module.
 
