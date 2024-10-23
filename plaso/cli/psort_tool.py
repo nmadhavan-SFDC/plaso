@@ -463,6 +463,82 @@ class PsortTool(
     """Processes a Plaso storage file.
 
     Raises:
+        BadConfigOption: when a configuration parameter fails validation or the
+            storage file cannot be opened with read access.
+        RuntimeError: if a non-recoverable situation is encountered.
+    """
+    self._status_view.SetMode(self._status_view_mode)
+    self._status_view.SetStatusFile(self._status_view_file)
+    self._status_view.SetStorageFileInformation(self._storage_file_path)
+
+    status_update_callback = self._status_view.GetAnalysisStatusUpdateCallback()
+
+    storage_reader = storage_factory.StorageFactory.CreateStorageReaderForFile(
+        self._storage_file_path)
+    if not storage_reader:
+        raise RuntimeError('Unable to create storage reader.')
+
+    try:
+        self._number_of_stored_analysis_reports = (
+            storage_reader.GetNumberOfAttributeContainers(
+                self._CONTAINER_TYPE_ANALYSIS_REPORT))
+    finally:
+        storage_reader.Close()
+
+    session = engine.BaseEngine.CreateSession()
+
+    configuration = self._CreateOutputAndFormattingProcessingConfiguration()
+
+    if self._analysis_plugins:
+        self._AnalyzeEvents(
+            session, configuration, status_update_callback=status_update_callback)
+
+    if self._output_format != 'null':
+        storage_reader = storage_factory.StorageFactory.CreateStorageReaderForFile(
+            self._storage_file_path)
+
+        # Create the knowledge base and read preprocessing information.
+        knowledge_base_object = knowledge_base.KnowledgeBase()
+        # Instead of ReadPreprocessingInformation, use ReadAttributeContainers
+        # to populate the knowledge base. For example:
+        storage_reader.ReadAttributeContainers(
+            definitions.CONTAINER_TYPE_SOURCE, knowledge_base_object.SetEventSource)
+
+        # Create the output mediator with the storage_reader.
+        output_mediator = output_mediator_module.OutputMediator(
+            knowledge_base_object,
+            data_location=self._data_location,
+            preferred_encoding='utf-8',
+            storage_reader=storage_reader)
+
+        # Set up the output module with the output mediator.
+        self._output_module.SetOutputMediator(output_mediator)
+
+        output_engine = multi_output_engine.OutputAndFormattingMultiProcessEngine()
+        output_engine.SetStatusUpdateInterval(self._status_view_interval)
+
+        output_engine.ExportEvents(
+            storage_reader, self._output_module, configuration,
+            deduplicate_events=self._deduplicate_events,
+            event_filter=self._event_filter,
+            status_update_callback=status_update_callback,
+            time_slice=self._time_slice, use_time_slicer=self._use_time_slicer)
+
+        self._output_module.Close()
+        self._output_module = None
+
+    if self._quiet_mode:
+        return
+
+    self._output_writer.Write('Processing completed.\n')
+
+    storage_reader = storage_factory.StorageFactory.CreateStorageReaderForFile(
+        self._storage_file_path)
+    self._PrintAnalysisReportsDetails(storage_reader)
+
+    """Processes a Plaso storage file.
+
+    Raises:
       BadConfigOption: when a configuration parameter fails validation or the
           storage file cannot be opened with read access.
       RuntimeError: if a non-recoverable situation is encountered.
