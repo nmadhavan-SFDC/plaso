@@ -592,9 +592,9 @@ class PinfoTool(tools.CLITool, tool_options.StorageFileOptions):
     """
     storage_reader = (
         storage_factory.StorageFactory.CreateStorageReaderForFile(path))
-    if not storage_reader:
-      raise errors.BadConfigOption(
-          f'Format of storage file: {path:s} not supported.')
+    #if not storage_reader:
+    #  raise errors.BadConfigOption(
+    #      f'Format of storage file: {path:s} not supported.')
 
     return storage_reader
 
