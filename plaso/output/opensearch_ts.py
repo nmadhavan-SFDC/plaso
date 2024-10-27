@@ -95,9 +95,13 @@ class OpenSearchTimesketchOutputModule(
       field_values (dict[str, str]): output field values per name.
     """
     event_document = {'index': {'_index': self._index_name}}
+    # Ensure field_values is mutable
+    if not isinstance(field_values, dict):
+        field_values = dict(field_values)
 
     # Add timeline_id on the event level. It is used in Timesketch to
     # support shared indices.
+    
     field_values['__ts_timeline_id'] = self._timeline_identifier
 
     self._event_documents.append(event_document)
