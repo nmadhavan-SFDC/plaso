@@ -95,14 +95,21 @@ class OpenSearchTimesketchOutputModule(
       field_values (dict[str, str]): output field values per name.
     """
     event_document = {'index': {'_index': self._index_name}}
-    # Ensure field_values is mutable
-    # Check if field_values can be converted using CopyToDict()
+    # Convert EventObject to dictionary
     if hasattr(field_values, 'CopyToDict'):
-        # Convert EventObject to a dictionary using the standard method
+        # Use the built-in method if available
         field_values_dict = field_values.CopyToDict()
+    elif hasattr(field_values, 'GetAttributes'):
+        # Fallback to GetAttributes if available
+        field_values_dict = field_values.GetAttributes()
     else:
-        # Fallback: Manually create a dictionary from the object's attributes
-        field_values_dict = {attr: getattr(field_values, attr) for attr in dir(field_values) if not attr.startswith('_')}
+        # Last resort: try direct dictionary conversion
+        try:
+            field_values_dict = dict(field_values)
+        except TypeError:
+            # If all else fails, log error and create empty dict
+            logger.error('Unable to convert field_values to dictionary')
+            field_values_dict = {}
 
     # Add timeline_id on the event level. It is used in Timesketch to
     # support shared indices.
