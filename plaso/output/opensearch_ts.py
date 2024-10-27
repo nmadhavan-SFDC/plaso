@@ -83,27 +83,29 @@ class OpenSearchTimesketchOutputModule(
     self._Connect()
     self._CreateIndexIfNotExists(self._index_name, self._mappings)
 
-  def WriteFieldValues(self, output_mediator, field_values, event_data, event_data_stream, event_tag, **kwargs):
+  def WriteFieldValues(self, output_mediator, field_values):
     """Writes field values to the output.
+
+    Events are buffered in the form of documents and inserted to OpenSearch
+    when the flush interval (threshold) has been reached.
 
     Args:
       output_mediator (OutputMediator): mediates interactions between output
           modules and other components, such as storage and dfVFS.
-      field_values (dict[str, str]): output field values.
-      event_data (EventData): event data.
-      event_data_stream (EventDataStream): event data stream.
-      event_tag (EventTag): event tag.
+      field_values (dict[str, str]): output field values per name.
     """
     event_document = {'index': {'_index': self._index_name}}
-    field_values_dict = output_mediator.GetFormattedFieldsFromEvent(field_values, None)
-    field_values_dict['__ts_timeline_id'] = self._timeline_identifier
+
+    # Add timeline_id on the event level. It is used in Timesketch to
+    # support shared indices.
+    field_values['__ts_timeline_id'] = self._timeline_identifier
 
     self._event_documents.append(event_document)
-    self._event_documents.append(field_values_dict)
+    self._event_documents.append(field_values)
     self._number_of_buffered_events += 1
 
     if self._number_of_buffered_events > self._flush_interval:
-        self._FlushEvents()
+      self._FlushEvents()
 
         
   def SetUp(self, options):
