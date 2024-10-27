@@ -83,7 +83,7 @@ class OpenSearchTimesketchOutputModule(
     self._Connect()
     self._CreateIndexIfNotExists(self._index_name, self._mappings)
 
-  def WriteFieldValues(self, output_mediator, field_values):
+  def WriteFieldValues(self, output_mediator, field_values, *args, **kwargs):
     """Writes field values to the output.
 
     Events are buffered in the form of documents and inserted to OpenSearch
