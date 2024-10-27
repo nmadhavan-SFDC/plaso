@@ -96,12 +96,12 @@ class OpenSearchTimesketchOutputModule(
     """
     event_document = {'index': {'_index': self._index_name}}
     # Ensure field_values is mutable
-    # Check if field_values is an EventObject and extract data safely
+    # Check if field_values can be converted using CopyToDict()
     if hasattr(field_values, 'CopyToDict'):
-        # Use the CopyToDict() method if available to convert to a dictionary
+        # Convert EventObject to a dictionary using the standard method
         field_values_dict = field_values.CopyToDict()
     else:
-        # Fallback: try to access field values as attributes
+        # Fallback: Manually create a dictionary from the object's attributes
         field_values_dict = {attr: getattr(field_values, attr) for attr in dir(field_values) if not attr.startswith('_')}
 
     # Add timeline_id on the event level. It is used in Timesketch to
