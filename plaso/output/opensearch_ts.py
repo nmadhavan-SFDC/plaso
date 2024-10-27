@@ -92,36 +92,43 @@ class OpenSearchTimesketchOutputModule(
     Args:
       output_mediator (OutputMediator): mediates interactions between output
           modules and other components, such as storage and dfVFS.
-      field_values (dict[str, str]): output field values per name.
+      field_values (EventObject or dict): output field values.
     """
     event_document = {'index': {'_index': self._index_name}}
-    # Convert EventObject to dictionary
-    if hasattr(field_values, 'CopyToDict'):
-        # Use the built-in method if available
-        field_values_dict = field_values.CopyToDict()
-    elif hasattr(field_values, 'GetAttributes'):
-        # Fallback to GetAttributes if available
-        field_values_dict = field_values.GetAttributes()
-    else:
-        # Last resort: try direct dictionary conversion
-        try:
-            field_values_dict = dict(field_values)
-        except TypeError:
-            # If all else fails, log error and create empty dict
-            logger.error('Unable to convert field_values to dictionary')
-            field_values_dict = {}
-
-    # Add timeline_id on the event level. It is used in Timesketch to
-    # support shared indices.
     
-    field_values['__ts_timeline_id'] = self._timeline_identifier
+    try:
+        # First get the attributes from the event object
+        if hasattr(field_values, 'GetAttributes'):
+            field_values_dict = field_values.GetAttributes()
+        else:
+            field_values_dict = {}
+            # Get all public attributes
+            for attr in dir(field_values):
+                if not attr.startswith('_'):
+                    try:
+                        value = getattr(field_values, attr)
+                        if not callable(value):
+                            field_values_dict[attr] = value
+                    except Exception:
+                        continue
+        
+        # Add timeline_id to the dictionary
+        field_values_dict['__ts_timeline_id'] = self._timeline_identifier
 
-    self._event_documents.append(event_document)
-    self._event_documents.append(field_values)
-    self._number_of_buffered_events += 1
+        # Append both document header and field values dictionary
+        self._event_documents.append(event_document)
+        self._event_documents.append(field_values_dict)
+        self._number_of_buffered_events += 1
 
-    if self._number_of_buffered_events > self._flush_interval:
-      self._FlushEvents()
+        if self._number_of_buffered_events > self._flush_interval:
+            self._FlushEvents()
+            
+    except Exception as e:
+        logger.error('Error processing event: {0!s}'.format(e))
+        # Create a minimal document if everything fails
+        minimal_dict = {'__ts_timeline_id': self._timeline_identifier}
+        self._event_documents.append(event_document)
+        self._event_documents.append(minimal_dict)
 
         
   def SetUp(self, options):
