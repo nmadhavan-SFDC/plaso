@@ -83,52 +83,27 @@ class OpenSearchTimesketchOutputModule(
     self._Connect()
     self._CreateIndexIfNotExists(self._index_name, self._mappings)
 
-  def WriteFieldValues(self, output_mediator, field_values, *args, **kwargs):
+  def WriteFieldValues(self, output_mediator, field_values, event_data, event_data_stream, event_tag, **kwargs):
     """Writes field values to the output.
-
-    Events are buffered in the form of documents and inserted to OpenSearch
-    when the flush interval (threshold) has been reached.
 
     Args:
       output_mediator (OutputMediator): mediates interactions between output
           modules and other components, such as storage and dfVFS.
-      field_values (EventObject or dict): output field values.
+      field_values (dict[str, str]): output field values.
+      event_data (EventData): event data.
+      event_data_stream (EventDataStream): event data stream.
+      event_tag (EventTag): event tag.
     """
     event_document = {'index': {'_index': self._index_name}}
-    
-    try:
-        # First get the attributes from the event object
-        if hasattr(field_values, 'GetAttributes'):
-            field_values_dict = field_values.GetAttributes()
-        else:
-            field_values_dict = {}
-            # Get all public attributes
-            for attr in dir(field_values):
-                if not attr.startswith('_'):
-                    try:
-                        value = getattr(field_values, attr)
-                        if not callable(value):
-                            field_values_dict[attr] = value
-                    except Exception:
-                        continue
-        
-        # Add timeline_id to the dictionary
-        field_values_dict['__ts_timeline_id'] = self._timeline_identifier
+    field_values_dict = output_mediator.GetFormattedFieldsFromEvent(field_values, None)
+    field_values_dict['__ts_timeline_id'] = self._timeline_identifier
 
-        # Append both document header and field values dictionary
-        self._event_documents.append(event_document)
-        self._event_documents.append(field_values_dict)
-        self._number_of_buffered_events += 1
+    self._event_documents.append(event_document)
+    self._event_documents.append(field_values_dict)
+    self._number_of_buffered_events += 1
 
-        if self._number_of_buffered_events > self._flush_interval:
-            self._FlushEvents()
-            
-    except Exception as e:
-        logger.error('Error processing event: {0!s}'.format(e))
-        # Create a minimal document if everything fails
-        minimal_dict = {'__ts_timeline_id': self._timeline_identifier}
-        self._event_documents.append(event_document)
-        self._event_documents.append(minimal_dict)
+    if self._number_of_buffered_events > self._flush_interval:
+        self._FlushEvents()
 
         
   def SetUp(self, options):
