@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """An output module that saves events to OpenSearch for Timesketch."""
-import os
-import json
+
+import boto3
+from opensearchpy import OpenSearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
+
 from plaso.output import logger
 from plaso.output import manager
 from plaso.output import shared_opensearch
+import numpy
+import json
 
 class OpenSearchTimesketchOutputModule(
     shared_opensearch.SharedOpenSearchOutputModule):
@@ -18,140 +23,184 @@ class OpenSearchTimesketchOutputModule(
   MAPPINGS_FILENAME = 'plaso.mappings'
   MAPPINGS_PATH = '/etc/timesketch'
 
+  def _FlushEvents(self):
+    """Inserts buffered event documents into OpenSearch with detailed logging."""
+    if not self._event_documents:
+        return
+
+    # Prepare bulk body
+    bulk_body = ''
+    for doc in self._event_documents:
+        bulk_body += json.dumps(doc, default=self._JSONSerializeHelper) + '\n'
+
+    bulk_arguments = {
+        'body': bulk_body,
+        'index': self._index_name,
+        'refresh': False,
+        'request_timeout': self._request_timeout
+    }
+
+    try:
+        response = self._client.bulk(**bulk_arguments)
+        if response.get('errors'):
+            logger.error(f"Bulk insert encountered errors: {response}")
+        else:
+            logger.info(f"Successfully inserted {len(self._event_documents)//2} events.")
+    except Exception as e:
+        logger.error(f"Failed to insert events into OpenSearch: {e}")
+        logger.error("Exception details:", exc_info=True)
+        # Optionally, raise the exception or handle it appropriately.
+
+    # Reset the buffer and counter
+    self._event_documents = []
+    self._number_of_buffered_events = 0
+
+  def _JSONSerializeHelper(self, obj):
+      """Helper function for JSON serialization of unsupported data types."""
+      if isinstance(obj, numpy.generic):
+          return obj.item()
+      elif isinstance(obj, numpy.ndarray):
+          return obj.tolist()
+      elif isinstance(obj, bytes):
+          return obj.decode('utf-8', errors='replace')
+      else:
+          return str(obj)
+
   def __init__(self):
     """Initializes an output module."""
     super(OpenSearchTimesketchOutputModule, self).__init__()
     self._timeline_identifier = None
+    self._request_timeout = 300
 
-  def SetOutputMediator(self, output_mediator):
-    """Sets the output mediator.
-    
+  def _Connect(self):
+    """Connects to the OpenSearch server."""
+    # Use AWS authentication
+    host = self._host
+    port = self._port
+    use_ssl = self._use_ssl
+
+    # Get AWS credentials
+    session = boto3.Session()
+    credentials = session.get_credentials()
+    region = session.region_name or 'us-west-2'  # Update with your region
+
+    aws_auth = AWS4Auth(
+        credentials.access_key,
+        credentials.secret_key,
+        region,
+        'es',
+        session_token=credentials.token
+    )
+
+    self._client = OpenSearch(
+        hosts=[{'host': host, 'port': port}],
+        http_auth=aws_auth,
+        use_ssl=use_ssl,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection
+    )
+
+  def WriteEventBody(self, output_mediator, event, event_data, event_data_stream, event_tag):
+    """Writes the body of an event to the output.
+
     Args:
-        output_mediator (OutputMediator): mediates interactions between output
-            modules and other components, such as storage and dfVFS.
+      output_mediator (OutputMediator): mediates interactions between output
+          modules and other components, such as storage and dfVFS.
+      event (EventObject): event.
+      event_data (EventData): event data.
+      event_data_stream (EventDataStream): event data stream.
+      event_tag (EventTag): event tag.
     """
-    self._output_mediator = output_mediator
+    # Create a dictionary to hold all event field values
+    event_values = event_data.CopyToDict()
+    # Log the event values for debugging
 
+    # Add event-specific attributes
+    event_values['timestamp'] = event.timestamp
+    event_values['timestamp_desc'] = event.timestamp_desc
+
+    # Get the message formatter for the event data type
+    message_formatter = output_mediator.GetMessageFormatter(event_data.data_type)
+
+    if message_formatter:
+        # Format the event values using the formatter's helpers
+        message_formatter.FormatEventValues(output_mediator, event_values)
+
+        # Get formatted message strings
+        message = message_formatter.GetMessage(event_values)
+        message_short = message_formatter.GetMessageShort(event_values)
+        event_values['message'] = message
+        event_values['message_short'] = message_short
+
+        # Get formatted source strings
+        source_short, source_long = output_mediator.GetSourceMapping(event_data.data_type)
+        event_values['source_short'] = source_short or ''
+        event_values['source_long'] = source_long or ''
+    else:
+        # If no formatter is found, use defaults
+        event_values['message'] = ''
+        event_values['message_short'] = ''
+        event_values['source_short'] = ''
+        event_values['source_long'] = ''
+
+    # Include event tag if available
+    if event_tag:
+        event_values['tag'] = event_tag.labels
+
+    # Add timeline identifier for Timesketch
+    event_values['__ts_timeline_id'] = self._timeline_identifier
+
+    # Sanitize event_values to convert unsupported data types
+    event_values = self._SanitizeEventValues(event_values)
+
+    event_document = {'index': {'_index': self._index_name}}
+
+    self._event_documents.append(event_document)
+    self._event_documents.append(event_values)
+    self._number_of_buffered_events += 1
+
+    if self._number_of_buffered_events > self._flush_interval:
+        self._FlushEvents()
+
+  def _SanitizeEventValues(self, event_values):
+    """Sanitize event values to ensure they are serializable."""
+    sanitized_values = {}
+    for key, value in event_values.items():
+        if isinstance(value, numpy.generic):
+            sanitized_values[key] = value.item()
+        elif isinstance(value, numpy.ndarray):
+            sanitized_values[key] = value.tolist()
+        elif isinstance(value, bytes):
+            sanitized_values[key] = value.decode('utf-8', errors='replace')
+        elif isinstance(value, dict):
+            sanitized_values[key] = self._SanitizeEventValues(value)
+        elif isinstance(value, list):
+            sanitized_values[key] = [self._SanitizeEventValues(v) if isinstance(v, dict) else v for v in value]
+        else:
+            sanitized_values[key] = value
+    return sanitized_values
+
+  def WriteFieldValuesOfMACBGroup(self, output_mediator, event_macb_group):
+    """Writes field values of a group of events with identical timestamps."""
+    for event, event_data, event_data_stream, event_tag in event_macb_group:
+        self.WriteEventBody(output_mediator, event, event_data, event_data_stream, event_tag)
 
   def GetMissingArguments(self):
-    """Retrieves a list of arguments that are missing from the input.
-
-    Returns:
-      list[str]: names of arguments that are required by the module and have
-          not been specified.
-    """
+    """Retrieves a list of arguments that are missing from the input."""
     if not self._timeline_identifier:
       return ['timeline_id']
     return []
 
   def SetTimelineIdentifier(self, timeline_identifier):
-    """Sets the timeline identifier.
-
-    Args:
-      timeline_identifier (int): timeline identifier.
-    """
+    """Sets the timeline identifier."""
     self._timeline_identifier = timeline_identifier
     logger.info('Timeline identifier: {0:d}'.format(self._timeline_identifier))
 
-  def _LoadMappings(self):
-    """Loads the OpenSearch mappings.
-
-    Returns:
-      dict: OpenSearch mappings.
-
-    Raises:
-      BadConfigOption: if the mappings file cannot be loaded.
-    """
-    mappings_path = os.path.join(self.MAPPINGS_PATH, self.MAPPINGS_FILENAME)
-    if not os.path.exists(mappings_path):
-        raise errors.BadConfigOption(
-            f'Mappings file not found at {mappings_path}')
-
-    with open(mappings_path, 'r') as mappings_file:
-        mappings = json.load(mappings_file)
-    return mappings
-
   def WriteHeader(self, output_mediator):
-    """Connects to the OpenSearch server and creates the index.
-
-    Args:
-      output_mediator (OutputMediator): mediates interactions between output
-          modules and other components, such as storage and dfVFS.
-    """
-    # Set mappings before connecting
-    self._mappings = self._LoadMappings()
+    """Connects to the OpenSearch server and creates the index."""
     self._Connect()
     self._CreateIndexIfNotExists(self._index_name, self._mappings)
 
-  def WriteFieldValues(self, output_mediator, field_values):
-    """Writes field values to the output.
-
-    Events are buffered in the form of documents and inserted to OpenSearch
-    when the flush interval (threshold) has been reached.
-
-    Args:
-      output_mediator (OutputMediator): mediates interactions between output
-          modules and other components, such as storage and dfVFS.
-      field_values (dict[str, str]): output field values per name.
-    """
-    event_document = {'index': {'_index': self._index_name}}
-
-    # Add timeline_id on the event level. It is used in Timesketch to
-    # support shared indices.
-    field_values['__ts_timeline_id'] = self._timeline_identifier
-
-    self._event_documents.append(event_document)
-    self._event_documents.append(field_values)
-    self._number_of_buffered_events += 1
-
-    if self._number_of_buffered_events > self._flush_interval:
-      self._FlushEvents()
-
-        
-  def SetUp(self, options):
-    """Sets up the output module.
-
-    Args:
-      options (argparse.Namespace): parser options.
-
-    Raises:
-      BadConfigOption: when required parameters are missing.
-    """
-    super(OpenSearchTimesketchOutputModule, self).SetUp(options)
-
-    # Set the index name
-    index_name = getattr(options, 'index_name', None)
-    if not index_name:
-        raise errors.BadConfigOption('Output index name was not provided.')
-    self.SetIndexName(index_name)
-
-    # Set the timeline identifier
-    timeline_identifier = getattr(options, 'timeline_id', None)
-    if not timeline_identifier:
-        raise errors.BadConfigOption('Timeline identifier was not provided.')
-    self.SetTimelineIdentifier(int(timeline_identifier))
-
-    # Set the server and port
-    server = getattr(options, 'opensearch_server', None)
-    if not server:
-        raise errors.BadConfigOption('OpenSearch server was not provided.')
-
-    port = getattr(options, 'opensearch_port', None)
-    if not port:
-        raise errors.BadConfigOption('OpenSearch port was not provided.')
-
-    self.SetServerInformation(server, int(port))
-
-    # Set use_ssl
-    use_ssl = getattr(options, 'use_ssl', True)
-    self.SetUseSSL(use_ssl)
-
-    # Set AWS authentication
-    use_aws_auth = getattr(options, 'use_aws_auth', True)
-    self.SetUseAWSAuth(use_aws_auth)
-
-    aws_region = getattr(options, 'aws_region', 'us-west-2')
-    self.SetAWSRegion(aws_region)
 
 manager.OutputManager.RegisterOutput(
     OpenSearchTimesketchOutputModule,
